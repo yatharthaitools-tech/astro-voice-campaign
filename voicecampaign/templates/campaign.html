@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% block title %}{{ c.name }}{% endblock %}
+{% block head %}{% if active_refresh %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
+{% block content %}
+{% macro csrf() %}<input type="hidden" name="_csrf" value="{{ csrf_token() }}">{% endmacro %}
+<div class="row" style="justify-content:space-between"><div><h1>{{ c.name }}</h1><p class="sub">{{ c.source_filename }} · created {{ c.created_at|ist }}</p></div>
+<a class="btn" href="{{ url_for('report_csv', cid=c.id) }}">Download report (CSV)</a></div>
+{% if not_ready %}<div class="flash warn">{{ not_ready }}</div>{% endif %}
+
+<h2>1. Campaign summary</h2>
+<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Experts</th><th class="n">Ready to call</th><th class="n">Flagged</th><th>Recording</th><th>Status</th></tr></thead><tbody>
+{% for s in summary %}<tr><td><b>{{ s.name }}</b></td><td class="n">{{ s.experts }}</td><td class="n">{{ s.ready }}</td><td class="n">{{ s.flagged }}</td>
+<td class="mono">{{ s.recording|truncate(40) if s.recording else '—' }}</td>
+<td>{% if not s.key %}<span class="pill bad">Language missing</span>{% elif not s.has_audio %}<span class="pill bad">Recording missing</span>{% elif s.ready == 0 %}<span class="pill mute">Nothing to call</span>{% else %}<span class="pill good">Ready</span>{% endif %}</td></tr>{% endfor %}
+</tbody><tfoot><tr><td>Total</td><td class="n">{{ summary|sum(attribute='experts') }}</td><td class="n">{{ summary|sum(attribute='ready') }}</td><td class="n">{{ summary|sum(attribute='flagged') }}</td><td colspan="2"></td></tr></tfoot></table></div>
+{% if summary|selectattr('has_audio','false')|selectattr('key')|list %}<p class="sub">Languages marked “Recording missing” will not be called. <a href="{{ url_for('languages') }}">Upload their recordings</a>, then come back — no re-upload of the CSV needed.</p>{% endif %}
+
+<h2>2. Launch</h2>
+<div class="card row">
+<form method="post" action="{{ url_for('launch', cid=c.id) }}" class="row" onsubmit="return confirm('Start calling now? Experts already called or queued in this campaign are never called again.')">{{ csrf() }}
+<select name="language"><option value="all">All languages ({{ pending_ready }} ready)</option>
+{% for s in summary if s.key and s.has_audio and s.ready %}<option value="{{ s.key }}">{{ s.name }} only ({{ s.ready }})</option>{% endfor %}</select>
+<button>Launch campaign</button></form>
+<form method="post" action="{{ url_for('resume', cid=c.id) }}">{{ csrf() }}<button class="ghost" title="Restart the dialer if the server was restarted while calls were queued">Resume dialing</button></form>
+<form method="post" action="{{ url_for('set_rate', cid=c.id) }}" class="row" style="margin-left:auto">{{ csrf() }}<label class="sub" style="margin:0">Cost / billed min <input type="number" name="rate" value="{{ c.cost_per_minute }}" step="0.01" min="0" style="width:80px"></label><button class="ghost">Save</button></form>
+</div>
+<p class="sub">To test first, tick a few experts in the table below and use “Send test call”. A tested expert counts as called, so the full launch will skip them.</p>
+
+<h2>3. Results</h2>
+<div class="stats"><div class="stat"><b>{{ totals.placed }}</b><span>Calls placed</span></div><div class="stat"><b>{{ totals.answered }}</b><span>Answered</span></div>
+<div class="stat"><b>{{ totals.unanswered }}</b><span>No answer / busy</span></div><div class="stat"><b>{{ totals.failed }}</b><span>Failed</span></div>
+<div class="stat"><b>{{ '%.2f'|format(totals.cost) }}</b><span>Estimated cost ({{ totals.minutes|int }} billed min)</span></div></div>
+<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">No answer / busy</th><th class="n">Failed</th><th class="n">In progress</th><th class="n">Avg duration</th><th class="n">Est. cost</th></tr></thead><tbody>
+{% for r in results %}<tr><td><b>{{ r.name }}</b></td><td class="n">{{ r.placed }}</td><td class="n">{{ r.answered }}</td><td class="n">{{ r.unanswered }}</td><td class="n">{{ r.failed }}</td><td class="n">{{ r.in_flight }}</td>
+<td class="n">{{ '%d:%02d'|format((r.avg_duration|int)//60, (r.avg_duration|int)%60) }}</td><td class="n">{{ '%.2f'|format(r.cost) }}</td></tr>
+{% else %}<tr><td colspan="8">No calls placed yet.</td></tr>{% endfor %}</tbody>
+<tfoot><tr><td>Total</td><td class="n">{{ totals.placed }}</td><td class="n">{{ totals.answered }}</td><td class="n">{{ totals.unanswered }}</td><td class="n">{{ totals.failed }}</td><td class="n">{{ totals.in_flight }}</td><td></td><td class="n">{{ '%.2f'|format(totals.cost) }}</td></tr></tfoot></table></div>
+<p class="sub">Cost = answered calls rounded up to whole minutes × the rate above. It is an estimate — check your provider’s invoice for the exact figure.{% if active_refresh %} This page refreshes while calls are in progress.{% endif %}</p>
+
+<h2>4. Experts &amp; mapping</h2>
+<form method="get" class="row" style="margin-bottom:10px">
+<select name="language"><option value="">All languages</option>{% for s in summary %}<option value="{{ s.key }}" {{ 'selected' if filters.language == s.key and s.key }}>{{ s.name }}</option>{% endfor %}</select>
+<select name="flag"><option value="">All mapping states</option>{% for f in all_flags %}<option value="{{ f }}" {{ 'selected' if filters.flag == f }}>{{ flag_labels[f] }}</option>{% endfor %}</select>
+<select name="status"><option value="">All call statuses</option>{% for k, v in status_labels.items() %}<option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ v }}</option>{% endfor %}</select>
+<button class="ghost">Filter</button><span class="sub" style="margin:0">{{ total }} shown</span></div>
+<form method="post" action="{{ url_for('test_calls', cid=c.id) }}">{{ csrf() }}
+<div class="card scroll"><table><thead><tr><th></th><th>Expert</th><th>Phone</th><th>Language</th><th>Recording</th><th>Mapping</th><th>Call</th><th class="n">Secs</th></tr></thead><tbody>
+{% for k in calls %}<tr>
+<td>{% if k.flag == 'ready' and k.status == 'pending' %}<input type="checkbox" name="call_ids" value="{{ k.id }}">{% endif %}</td>
+<td>{{ k.expert_name or '—' }}</td><td class="mono">{{ k.phone_e164 or k.phone_raw or '—' }}</td><td>{{ k.language_name or k.language_raw or '—' }}</td>
+<td class="mono">{{ (k.recording_used or k.recording_label or '—')|truncate(34) }}</td>
+<td><span class="pill {{ 'good' if k.flag=='ready' else 'bad' }}">{{ flag_labels[k.flag] }}</span></td>
+<td>{% if k.eligibility != 'ok' %}<span class="pill mute">Skipped</span>{% else %}<span class="pill {{ 'good' if k.status in ('completed','in_progress') else ('bad' if k.status in ('failed','canceled') else ('warn' if k.status in ('busy','no_answer') else 'mute')) }}" {% if k.error %}title="{{ k.error }}"{% endif %}>{{ status_labels[k.status] }}</span>{% if k.is_test %} <span class="pill mute">test</span>{% endif %}{% endif %}</td>
+<td class="n">{{ k.duration_seconds if k.duration_seconds is not none else '' }}</td></tr>
+{% else %}<tr><td colspan="8">No rows match.</td></tr>{% endfor %}</tbody></table></div>
+<div class="row"><button class="ghost">Send test call to ticked experts</button>
+{% if pages > 1 %}<span class="sub" style="margin:0">Page {{ page }} of {{ pages }}</span>
+{% if page > 1 %}<a href="{{ url_for('campaign', cid=c.id, page=page-1, **filters) }}">← Prev</a>{% endif %}{% if page < pages %}<a href="{{ url_for('campaign', cid=c.id, page=page+1, **filters) }}">Next →</a>{% endif %}{% endif %}</div></form>
+
+<form method="post" action="{{ url_for('delete_campaign', cid=c.id) }}" style="margin-top:32px" onsubmit="return confirm('Delete this campaign and its call history?')">{{ csrf() }}<button class="link">Delete campaign</button></form>
+{% endblock %}

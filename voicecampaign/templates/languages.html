@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}Recordings{% endblock %}
+{% block content %}
+<h1>Language recordings</h1><p class="sub">One recording per language (.mp3 or .wav, up to 10 MB) — upload it or paste a public URL. Uploading again replaces it.</p>
+<form method="post" action="{{ url_for('add_language') }}" class="card row"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+<input type="text" name="name" placeholder="Add another language, e.g. Gujarati" maxlength="40" required><button>Add language</button></form>
+<div class="card scroll"><table><thead><tr><th>Language</th><th>Current recording</th><th>Upload file</th><th>…or public URL</th><th></th></tr></thead><tbody>
+{% for l in languages %}<tr>
+<td><b>{{ l.name }}</b></td>
+<td>{% if l.audio_token %}<span class="pill good">Uploaded</span> <span class="mono">{{ l.audio_filename }}</span><br><audio controls preload="none" src="{{ url_for('serve_audio', token=l.audio_token) }}" style="height:32px;max-width:220px"></audio>
+{% elif l.audio_url %}<span class="pill good">URL</span> <a class="mono" href="{{ l.audio_url }}" target="_blank" rel="noopener noreferrer">{{ l.audio_url|truncate(48) }}</a>
+{% else %}<span class="pill bad">Not set</span>{% endif %}</td>
+<td><form method="post" action="{{ url_for('set_audio', key=l.key) }}" enctype="multipart/form-data" class="row"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="file" name="file" accept=".mp3,.wav,audio/*" required><button>Upload</button></form></td>
+<td><form method="post" action="{{ url_for('set_audio', key=l.key) }}" class="row"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="url" name="url" placeholder="https://…/hindi.mp3" required><button>Save</button></form></td>
+<td>{% if l.has_audio %}<form method="post" action="{{ url_for('clear_audio', key=l.key) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="link">Remove</button></form>{% endif %}</td>
+</tr>{% endfor %}</tbody></table></div>
+{% endblock %}

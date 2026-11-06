@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Campaigns{% endblock %}
+{% block content %}
+<h1>Campaigns</h1><p class="sub">One campaign covers every language. Each expert automatically gets the recording for their own language.</p>
+{% if not_ready %}<div class="flash warn">{{ not_ready }}</div>{% endif %}
+<form method="post" action="{{ url_for('create_campaign') }}" enctype="multipart/form-data" class="card">
+<h2 style="margin-top:0">New campaign</h2>
+<input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+<div class="row"><input type="text" name="name" placeholder="Campaign name" maxlength="80">
+<input type="file" name="csv" accept=".csv,text/csv" required>
+<label>Cost / billed minute <input type="number" name="rate" value="{{ rate }}" step="0.01" min="0" style="width:90px"></label>
+<button>Upload &amp; preview</button></div>
+<p class="sub" style="margin:10px 0 0">CSV columns: <span class="mono">expert_name, phone_number, language, consent_status</span>. Nothing is called until you launch from the preview.</p>
+</form>
+<div class="card scroll"><table><thead><tr><th>Campaign</th><th>Created</th><th class="n">Experts</th><th class="n">Calls placed</th><th></th></tr></thead><tbody>
+{% for c in campaigns %}<tr><td><a href="{{ url_for('campaign', cid=c.id) }}">{{ c.name }}</a></td><td>{{ c.created_at|ist }}</td><td class="n">{{ c.experts }}</td><td class="n">{{ c.placed }}</td><td>{% if c.first_launched_at %}<span class="pill good">Launched</span>{% else %}<span class="pill mute">Draft</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="5">No campaigns yet.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}
