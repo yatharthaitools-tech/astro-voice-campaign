@@ -168,39 +168,9 @@ def test_bad_csv_is_rejected_with_message(post):
     assert b'Missing column' in r.data and db.list_campaigns() == []
 
 
-def test_twilio_signature_and_webhook(monkeypatch, post, client, app):
-    import base64, hashlib, hmac
-    monkeypatch.setenv('VOICE_PROVIDER', 'twilio')
-    monkeypatch.setenv('TWILIO_AUTH_TOKEN', 'tok')
-    cid = make_campaign(post)
-    rows = by_name(cid)
-    call = rows['Asha']
-    with db.connect() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE campaign_calls SET status='ringing', provider_sid='CA1' WHERE id=%s", (call['id'],))
-    url = voice.status_callback_url(call['id'])
-    params = [('CallSid', 'CA1'), ('CallStatus', 'completed'), ('CallDuration', '75')]
-
-    def sign(p):
-        d = hmac.new(b'tok', (url + ''.join(k + v for k, v in sorted(p))).encode(), hashlib.sha1).digest()
-        return base64.b64encode(d).decode()
-    anon = app.test_client()
-    assert anon.post(f'/webhooks/call-status/{call["id"]}', data=dict(params)).status_code == 403
-    assert anon.post(f'/webhooks/call-status/{call["id"]}', data=dict(params),
-                     headers={'X-Twilio-Signature': 'bogus'}).status_code == 403
-    ok = anon.post(f'/webhooks/call-status/{call["id"]}', data=dict(params),
-                   headers={'X-Twilio-Signature': sign(params)})
-    assert ok.status_code == 204
-    done = db.get_call(call['id'])
-    assert done['status'] == 'completed' and done['duration_seconds'] == 75
-    # a late "ringing" callback must not undo a finished call
-    late = [('CallSid', 'CA1'), ('CallStatus', 'ringing')]
-    anon.post(f'/webhooks/call-status/{call["id"]}', data=dict(late), headers={'X-Twilio-Signature': sign(late)})
-    assert db.get_call(call['id'])['status'] == 'completed'
-
-
 def test_launch_blocked_when_provider_not_configured(monkeypatch, post):
-    monkeypatch.setenv('VOICE_PROVIDER', 'twilio')
-    for k in ('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'):
+    monkeypatch.setenv('VOICE_PROVIDER', 'plivo')
+    for k in ('PLIVO_AUTH_ID', 'PLIVO_AUTH_TOKEN', 'PLIVO_FROM_NUMBER'):
         monkeypatch.delenv(k, raising=False)
     cid = make_campaign(post)
     post(f'/campaigns/{cid}/launch', data={'language': 'all'})

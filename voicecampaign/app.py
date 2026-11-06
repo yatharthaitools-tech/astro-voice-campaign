@@ -18,7 +18,7 @@ PAGE_SIZE = 100
 IST = timezone(timedelta(hours=5, minutes=30))
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 # Called by the telephony provider, not a browser: authenticated by signature/token instead of CSRF.
-WEBHOOK_ENDPOINTS = {'call_status_webhook', 'plivo_status', 'plivo_answer'}
+WEBHOOK_ENDPOINTS = {'plivo_status', 'plivo_answer'}
 STATUS_LABELS = {
     'pending': 'Not started', 'queued': 'Queued', 'dialing': 'Dialing', 'ringing': 'Ringing',
     'in_progress': 'In call', 'completed': 'Answered', 'busy': 'Busy', 'no_answer': 'No answer',
@@ -326,23 +326,7 @@ def create_app(init=True):
         return Response('﻿' + buf.getvalue(), mimetype='text/csv',
                         headers={'Content-Disposition': f'attachment; filename={name}_report.csv'})
 
-    # --- provider webhook ---------------------------------------------------------
-    @app.route('/webhooks/call-status/<int:call_id>', methods=['POST'])
-    def call_status_webhook(call_id):
-        if voice.provider_name() != 'twilio':
-            abort(404)
-        url = voice.status_callback_url(call_id)
-        if not voice.valid_twilio_signature(url, list(request.form.items(multi=True)),
-                                            request.headers.get('X-Twilio-Signature', '')):
-            abort(403)
-        status = voice.map_twilio_status(request.form.get('CallStatus'))
-        call = db.get_call(call_id)
-        if not status or not call or call['provider_sid'] != request.form.get('CallSid'):
-            return ('', 204)
-        dur = request.form.get('CallDuration')
-        db.apply_status_update(call_id, status, int(dur) if dur and dur.isdigit() else None)
-        return ('', 204)
-
+    # --- provider webhooks (Plivo) ---------------------------------------------
     @app.route('/webhooks/plivo/answer/<int:call_id>', methods=['GET', 'POST'])
     def plivo_answer(call_id):
         """Plivo asks what to do once the expert picks up: play the recording

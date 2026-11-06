@@ -36,7 +36,6 @@ Phone numbers are normalised to E.164 (10-digit Indian numbers get `+91`; set `D
   caller ID), `PUBLIC_BASE_URL` and a **stable** `SECRET_KEY`. Plivo calls the expert, then
   fetches `/webhooks/plivo/answer/<id>` which plays that expert's language recording; status
   and duration arrive at `/webhooks/plivo/status/<id>`. Both URLs carry an unguessable per-call token.
-- `twilio` — `TWILIO_*` values; same flow, with Twilio's signed status webhook.
 
 `PUBLIC_BASE_URL` must be reachable from the internet over HTTPS (providers fetch uploaded
 recordings from `/audio/<token>.mp3`). Another provider = one new function in `voicecampaign/voice.py`.
