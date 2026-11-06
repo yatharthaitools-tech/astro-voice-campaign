@@ -1,0 +1,22 @@
+# Local run:  docker compose up --build   ->  http://localhost:8000
+services:
+  db:
+    image: postgres:16
+    environment: { POSTGRES_USER: voice, POSTGRES_PASSWORD: voice, POSTGRES_DB: voice_campaign }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U voice"], interval: 3s, retries: 20 }
+  web:
+    build: .
+    depends_on: { db: { condition: service_healthy } }
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: postgresql://voice:voice@db:5432/voice_campaign
+      SECRET_KEY: local-dev-secret-change-me
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: admin
+      PUBLIC_BASE_URL: http://localhost:8000
+      VOICE_PROVIDER: mock
+      INSECURE_COOKIES: "1"   # local http only; never set in production
+      CALLS_PER_SECOND: "5"
+volumes:
+  pgdata:

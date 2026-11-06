@@ -1,0 +1,39 @@
+# One-click deploy on Render: New > Blueprint > pick this repo.
+# Fill the `sync: false` values in the dashboard when prompted.
+databases:
+  - name: voice-db
+    plan: basic-256mb
+    databaseName: voice_campaign
+    user: voice
+
+services:
+  - type: web
+    name: astro-voice-campaign
+    runtime: docker
+    plan: starter            # must stay always-on: it runs the dialer thread
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: voice-db, property: connectionString }
+      - key: SECRET_KEY
+        generateValue: true  # generated once; never change it mid-campaign
+      - key: VOICE_PROVIDER
+        value: mock          # switch to plivo after your test run
+      - key: PUBLIC_BASE_URL
+        sync: false          # e.g. https://astro-voice-campaign.onrender.com
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PLIVO_AUTH_ID
+        sync: false
+      - key: PLIVO_AUTH_TOKEN
+        sync: false
+      - key: PLIVO_FROM_NUMBER
+        sync: false
+      - key: DEFAULT_COUNTRY_CODE
+        value: "91"
+      - key: CALLS_PER_SECOND
+        value: "1"
+      - key: COST_PER_MINUTE
+        value: "1.0"

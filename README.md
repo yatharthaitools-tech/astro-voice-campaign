@@ -43,7 +43,15 @@ recordings from `/audio/<token>.mp3`). Another provider = one new function in `v
 Calls are never retried automatically — a failed or ambiguous attempt is final, so nobody is called twice.
 Cost is an **estimate**: answered calls rounded up to whole minutes × the per-minute rate set on the campaign.
 
+## Deploy
+
+See [DEPLOY.md](DEPLOY.md) (Render blueprint included) for deployment, Plivo setup and the go-live checklist.
+
 ## Run
+
+Locally with Docker: `docker compose up --build` → http://localhost:8000 (admin@example.com / admin, mock mode).
+
+Or directly:
 
 ```bash
 pip install -r requirements.txt
