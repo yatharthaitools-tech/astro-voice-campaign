@@ -314,6 +314,10 @@ def mark_dialed(call_id, sid, status, recording, duration=None):
        (sid, status, recording, duration, call_id))
 
 
+def set_recording_used(call_id, url):
+    _q("UPDATE campaign_calls SET recording_used=%s, updated_at=now() WHERE id=%s", (url, call_id))
+
+
 def mark_failed(call_id, error, recording=None):
     _q("""UPDATE campaign_calls SET status='failed', error=%s, recording_used=COALESCE(%s, recording_used),
           updated_at=now() WHERE id=%s""", (error[:500], recording, call_id))

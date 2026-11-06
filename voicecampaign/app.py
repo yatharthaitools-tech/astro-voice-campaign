@@ -17,6 +17,8 @@ from voicecampaign import db, dispatcher, rules, voice
 PAGE_SIZE = 100
 IST = timezone(timedelta(hours=5, minutes=30))
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
+# Called by the telephony provider, not a browser: authenticated by signature/token instead of CSRF.
+WEBHOOK_ENDPOINTS = {'call_status_webhook', 'plivo_status', 'plivo_answer'}
 STATUS_LABELS = {
     'pending': 'Not started', 'queued': 'Queued', 'dialing': 'Dialing', 'ringing': 'Ringing',
     'in_progress': 'In call', 'completed': 'Answered', 'busy': 'Busy', 'no_answer': 'No answer',
@@ -42,7 +44,7 @@ def create_app(init=True):
 
     @app.before_request
     def _csrf_check():
-        if request.method == 'POST' and request.endpoint != 'call_status_webhook':
+        if request.method == 'POST' and request.endpoint not in WEBHOOK_ENDPOINTS:
             sent = request.form.get('_csrf', '')
             if not sent or not hmac.compare_digest(sent, session.get('_csrf', '')):
                 abort(400, 'Invalid or missing CSRF token. Reload the page and retry.')
@@ -339,6 +341,29 @@ def create_app(init=True):
             return ('', 204)
         dur = request.form.get('CallDuration')
         db.apply_status_update(call_id, status, int(dur) if dur and dur.isdigit() else None)
+        return ('', 204)
+
+    @app.route('/webhooks/plivo/answer/<int:call_id>', methods=['GET', 'POST'])
+    def plivo_answer(call_id):
+        """Plivo asks what to do once the expert picks up: play the recording
+        for THIS expert's language (resolved now, so a re-uploaded file is used)."""
+        if voice.provider_name() != 'plivo' or not voice.valid_callback_token(call_id, request.args.get('t')):
+            abort(403)
+        call = db.get_call(call_id)
+        url = db.recording_url_for(call['language_key'], voice.public_base_url()) if call else None
+        xml = voice.plivo_xml_play(url) if url else voice.PLIVO_HANGUP_XML
+        if url:
+            db.set_recording_used(call_id, url)
+        return Response(xml, mimetype='text/xml')
+
+    @app.route('/webhooks/plivo/status/<int:call_id>', methods=['POST'])
+    def plivo_status(call_id):
+        if voice.provider_name() != 'plivo' or not voice.valid_callback_token(call_id, request.args.get('t')):
+            abort(403)
+        status = voice.map_plivo_status(request.form.get('CallStatus'))
+        if status and db.get_call(call_id):
+            dur = request.form.get('Duration') or request.form.get('BillDuration')
+            db.apply_status_update(call_id, status, int(dur) if dur and dur.isdigit() else None)
         return ('', 204)
 
     return app

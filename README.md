@@ -29,12 +29,17 @@ Phone numbers are normalised to E.164 (10-digit Indian numbers get `+91`; set `D
 
 ## Telephony
 
-`VOICE_PROVIDER=mock` (default) places **no** real calls and simulates outcomes.
-`VOICE_PROVIDER=twilio` places real calls that `<Play>` the language's recording, and
-receives status/duration at `POST /webhooks/call-status/<id>` (signature-verified).
-Needs `TWILIO_*`, and `PUBLIC_BASE_URL` reachable from the internet over HTTPS (Twilio also
-fetches uploaded recordings from `/audio/<token>.mp3`). Other providers: implement
-`place_call` in `voicecampaign/voice.py`.
+`VOICE_PROVIDER` picks the provider:
+
+- `mock` (default) — places **no** real calls, simulates outcomes.
+- `plivo` — set `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_FROM_NUMBER` (a Plivo-rented/verified
+  caller ID), `PUBLIC_BASE_URL` and a **stable** `SECRET_KEY`. Plivo calls the expert, then
+  fetches `/webhooks/plivo/answer/<id>` which plays that expert's language recording; status
+  and duration arrive at `/webhooks/plivo/status/<id>`. Both URLs carry an unguessable per-call token.
+- `twilio` — `TWILIO_*` values; same flow, with Twilio's signed status webhook.
+
+`PUBLIC_BASE_URL` must be reachable from the internet over HTTPS (providers fetch uploaded
+recordings from `/audio/<token>.mp3`). Another provider = one new function in `voicecampaign/voice.py`.
 
 Calls are never retried automatically — a failed or ambiguous attempt is final, so nobody is called twice.
 Cost is an **estimate**: answered calls rounded up to whole minutes × the per-minute rate set on the campaign.
