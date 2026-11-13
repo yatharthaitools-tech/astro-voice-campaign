@@ -42,6 +42,18 @@ def create_app(init=True):
             session['_csrf'] = secrets.token_urlsafe(24)
         return session['_csrf']
 
+    # Optional: when set, the admin UI answers ONLY on these hostnames. Any other
+    # hostname (e.g. a public one given to Plivo) serves just the endpoints the
+    # provider needs, so the login page is never exposed to the internet.
+    PUBLIC_ENDPOINTS = WEBHOOK_ENDPOINTS | {'serve_audio', 'healthz', 'static'}
+
+    @app.before_request
+    def _host_gate():
+        hosts = {h.strip().lower() for h in os.environ.get('ADMIN_HOSTS', '').split(',') if h.strip()}
+        if hosts and request.host.split(':')[0].lower() not in hosts \
+                and request.endpoint not in PUBLIC_ENDPOINTS:
+            abort(404)
+
     @app.before_request
     def _csrf_check():
         if request.method == 'POST' and request.endpoint not in WEBHOOK_ENDPOINTS:

@@ -17,6 +17,12 @@
    and redeploy. The header badge should read **Live calling (Plivo)**.
 4. Do not change `SECRET_KEY` after calls are placed — Plivo's callbacks for them would be rejected.
 
+### Public reachability (required for live calls)
+Plivo must reach `PUBLIC_BASE_URL` from the internet: `/webhooks/plivo/*`, `/audio/*`.
+If the app's main host is internal-only, give the service a second **public** hostname, set
+`PUBLIC_BASE_URL` to it, and set `ADMIN_HOSTS` to the internal hostname so the admin UI/login
+stays reachable only there (the public host then serves just the Plivo endpoints).
+
 ## 3. Before the real launch
 - [ ] Recordings page: all 8 languages show **Uploaded/URL**; play each once.
 - [ ] Campaign rate set to your real per-minute cost.
