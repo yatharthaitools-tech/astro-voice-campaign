@@ -4,7 +4,7 @@ import io
 import os
 import re
 import secrets
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 from urllib.parse import urlparse
@@ -132,6 +132,32 @@ def create_app(init=True):
     @app.route('/')
     @login_required
     def home():
+        """Default landing page: platform-level analytics across all campaigns."""
+        date_from = request.args.get('from') or None
+        date_to = request.args.get('to') or None
+        data = db.platform_analytics(date_from, date_to)
+        t = data['totals']
+        t['answer_rate'] = (t['answered'] * 100.0 / t['placed']) if t['placed'] else 0
+        t['cost'] = Decimal(t['cost']).quantize(Decimal('0.01'))
+        for r in data['by_language'] + data['by_campaign']:
+            r['cost'] = Decimal(r['cost']).quantize(Decimal('0.01'))
+            r['answer_rate'] = (r['answered'] * 100.0 / r['placed']) if r['placed'] else 0
+        # Last 30 IST days, zero-filled so the chart has no gaps.
+        today = datetime.now(IST).date()
+        by_day = {r['day']: r for r in data['trend']}
+        days = []
+        for i in range(29, -1, -1):
+            d = today - timedelta(days=i)
+            r = by_day.get(d)
+            days.append({'day': d, 'placed': r['placed'] if r else 0, 'answered': r['answered'] if r else 0})
+        data['days'] = days
+        data['days_max'] = max([d['placed'] for d in days] + [1])
+        return render_template('analytics.html', d=data, filters={'from': date_from or '', 'to': date_to or ''},
+                               nav='analytics')
+
+    @app.route('/campaigns', methods=['GET'])
+    @login_required
+    def campaigns_list():
         return render_template('home.html', campaigns=db.list_campaigns(), nav='campaigns',
                                rate=default_rate(), not_ready=voice.check_ready())
 
@@ -142,12 +168,12 @@ def create_app(init=True):
         name = (request.form.get('name') or '').strip()
         if not f or not f.filename:
             flash('Choose a CSV file.', 'error')
-            return redirect(url_for('home'))
+            return redirect(url_for('campaigns_list'))
         try:
             rows = rules.parse_csv(f.read())
         except rules.CsvError as e:
             flash(str(e), 'error')
-            return redirect(url_for('home'))
+            return redirect(url_for('campaigns_list'))
         rate = parse_rate(request.form.get('rate'), default_rate())
         cid = db.create_campaign(name or os.path.splitext(f.filename)[0], f.filename, rows, rate)
         flash(f'Imported {len(rows)} rows. Review the preview below, then launch.', 'ok')
@@ -304,7 +330,7 @@ def create_app(init=True):
             return redirect(url_for('campaign', cid=cid))
         db.delete_campaign(cid)
         flash('Campaign deleted.', 'ok')
-        return redirect(url_for('home'))
+        return redirect(url_for('campaigns_list'))
 
     @app.route('/campaigns/<int:cid>/report.csv')
     @login_required

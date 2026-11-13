@@ -6,6 +6,8 @@ own language**. No per-language campaigns.
 
 ## How it works
 
+The app opens on **Analytics** (platform-wide: calls, answer rate, avg duration, cost, by language, calls per day, skipped-expert reasons, per-campaign table). **Campaigns** and **Recordings** are the other tabs.
+
 1. **Recordings** (`/languages`) — per language, upload an `.mp3`/`.wav` or paste a
    public URL. Hindi, English, Tamil, Telugu, Malayalam, Kannada, Bengali and Marathi
    are pre-created; add more any time. A language that appears in a CSV but isn't

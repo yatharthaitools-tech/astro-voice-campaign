@@ -5,7 +5,8 @@
 {% block head %}{% endblock %}</head><body>
 {% if session.get('admin') %}
 <div class="top"><b>AstroLokal Voice</b>
-<a href="{{ url_for('home') }}" class="{{ 'on' if nav=='campaigns' }}">Campaigns</a>
+<a href="{{ url_for('home') }}" class="{{ 'on' if nav=='analytics' }}">Analytics</a>
+<a href="{{ url_for('campaigns_list') }}" class="{{ 'on' if nav=='campaigns' }}">Campaigns</a>
 <a href="{{ url_for('languages') }}" class="{{ 'on' if nav=='languages' }}">Recordings</a>
 <span class="pill {{ 'good' if provider=='plivo' else 'warn' }}">{{ 'Live calling (Plivo)' if provider=='plivo' else 'Mock mode – no real calls' }}</span>
 <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="ghost">Log out</button></form></div>

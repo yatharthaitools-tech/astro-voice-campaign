@@ -348,3 +348,68 @@ def get_call(call_id):
 
 def now():
     return datetime.now(timezone.utc)
+
+
+# --- platform analytics (all campaigns) ---------------------------------
+
+def _range(date_from, date_to):
+    """Optional campaign-created-date window (inclusive), IST calendar days."""
+    where, params = [], {}
+    if date_from:
+        where.append("(c.created_at AT TIME ZONE 'Asia/Kolkata')::date >= %(f)s"); params['f'] = date_from
+    if date_to:
+        where.append("(c.created_at AT TIME ZONE 'Asia/Kolkata')::date <= %(t)s"); params['t'] = date_to
+    return (' AND '.join(where) or 'TRUE'), params
+
+
+_COUNTS = """
+    COUNT(*) FILTER (WHERE k.status NOT IN ('pending','queued')) AS placed,
+    COUNT(*) FILTER (WHERE k.status IN %(ans)s) AS answered,
+    COUNT(*) FILTER (WHERE k.status IN %(un)s) AS unanswered,
+    COUNT(*) FILTER (WHERE k.status IN %(fail)s) AS failed,
+    COALESCE(AVG(k.duration_seconds) FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS avg_duration,
+    COALESCE(SUM(CEIL(k.duration_seconds / 60.0)) FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS billed_minutes,
+    COALESCE(SUM(CEIL(k.duration_seconds / 60.0) * c.cost_per_minute)
+             FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS cost"""
+_P = {'ans': ANSWERED, 'un': UNANSWERED, 'fail': FAILED}
+
+
+def platform_analytics(date_from=None, date_to=None):
+    w, rp = _range(date_from, date_to)
+    params = dict(_P, **rp)
+    totals = _q(f"""
+        SELECT COUNT(DISTINCT c.id) AS campaigns, COUNT(k.id) AS experts,
+               COUNT(*) FILTER (WHERE k.eligibility='ok') AS eligible,
+               COUNT(*) FILTER (WHERE k.id IS NOT NULL AND k.eligibility<>'ok') AS flagged,
+               {_COUNTS}
+        FROM campaigns c LEFT JOIN campaign_calls k ON k.campaign_id=c.id WHERE {w}""", params, one=True)
+    by_language = _q(f"""
+        SELECT COALESCE(k.language_key,'') AS key,
+               COALESCE(MAX(l.name), MAX(NULLIF(k.language_raw,'')), 'Missing language') AS name,
+               COUNT(*) AS experts, {_COUNTS}
+        FROM campaigns c JOIN campaign_calls k ON k.campaign_id=c.id
+             LEFT JOIN languages l ON l.key=k.language_key
+        WHERE {w} AND k.eligibility='ok'
+        GROUP BY COALESCE(k.language_key,'') ORDER BY placed DESC, experts DESC, name""", params)
+    by_campaign = _q(f"""
+        SELECT c.id, c.name, c.created_at, c.first_launched_at,
+               COUNT(k.id) AS experts, {_COUNTS}
+        FROM campaigns c LEFT JOIN campaign_calls k ON k.campaign_id=c.id
+        WHERE {w} GROUP BY c.id ORDER BY c.id DESC LIMIT 25""", params)
+    skipped = _q(f"""
+        SELECT k.eligibility AS reason, COUNT(*) AS n
+        FROM campaigns c JOIN campaign_calls k ON k.campaign_id=c.id
+        WHERE {w} AND k.eligibility<>'ok' GROUP BY k.eligibility ORDER BY n DESC""", rp)
+    no_rec = _q(f"""
+        SELECT COUNT(*) AS n FROM campaigns c JOIN campaign_calls k ON k.campaign_id=c.id
+             LEFT JOIN languages l ON l.key=k.language_key
+        WHERE {w} AND k.eligibility='ok' AND k.status='pending' AND NOT COALESCE({HAS_AUDIO}, FALSE)""",
+        rp, one=True)['n']
+    trend = _q("""
+        SELECT (k.dialed_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+               COUNT(*) AS placed, COUNT(*) FILTER (WHERE k.status IN %(ans)s) AS answered
+        FROM campaign_calls k
+        WHERE k.dialed_at >= now() - interval '30 days' AND k.status NOT IN ('pending','queued')
+        GROUP BY 1 ORDER BY 1""", {'ans': ANSWERED})
+    return {'totals': totals, 'by_language': by_language, 'by_campaign': by_campaign,
+            'skipped': skipped, 'no_recording': no_rec, 'trend': trend}
