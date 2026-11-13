@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS campaigns (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     source_filename TEXT,
-    cost_per_minute NUMERIC NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     first_launched_at TIMESTAMPTZ
 );
@@ -160,13 +159,13 @@ def recording_url_for(language_key, base_url):
 
 # --- campaigns -------------------------------------------------------------
 
-def create_campaign(name, filename, rows, cost_per_minute):
+def create_campaign(name, filename, rows):
     """Creates the campaign and all its call rows atomically. Any language in
     the file we don't know yet is added (without audio) so it can be uploaded
     afterwards instead of the rows being dropped."""
     with connect() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO campaigns (name, source_filename, cost_per_minute) VALUES (%s,%s,%s) RETURNING id",
-                    (name, filename, cost_per_minute))
+        cur.execute("INSERT INTO campaigns (name, source_filename) VALUES (%s,%s) RETURNING id",
+                    (name, filename))
         cid = cur.fetchone()['id']
         seen_langs = {}
         for r in rows:
@@ -191,10 +190,6 @@ def list_campaigns():
 
 def get_campaign(cid):
     return _q("SELECT * FROM campaigns WHERE id=%s", (cid,), one=True)
-
-
-def set_cost_per_minute(cid, rate):
-    _q("UPDATE campaigns SET cost_per_minute=%s WHERE id=%s", (rate, cid))
 
 
 def delete_campaign(cid):
@@ -241,8 +236,7 @@ def all_calls_for_report(cid):
 
 
 def report_by_language(cid):
-    """Per-language results. Cost = billed minutes (each answered call rounded
-    up to a whole minute) x the campaign's per-minute rate; unanswered = free."""
+    """Per-language results for one campaign."""
     return _q(f"""
         SELECT COALESCE(c.language_key,'') AS key,
                COALESCE(MAX(l.name), MAX(NULLIF(c.language_raw,'')), 'Missing language') AS name,
@@ -251,8 +245,7 @@ def report_by_language(cid):
                COUNT(*) FILTER (WHERE c.status IN %(un)s) AS unanswered,
                COUNT(*) FILTER (WHERE c.status IN %(fail)s) AS failed,
                COUNT(*) FILTER (WHERE c.status IN %(fly)s) AS in_flight,
-               COALESCE(AVG(c.duration_seconds) FILTER (WHERE c.status IN %(ans)s AND c.duration_seconds > 0), 0) AS avg_duration,
-               COALESCE(SUM(CEIL(c.duration_seconds / 60.0)) FILTER (WHERE c.status IN %(ans)s AND c.duration_seconds > 0), 0) AS billed_minutes
+               COALESCE(AVG(c.duration_seconds) FILTER (WHERE c.status IN %(ans)s AND c.duration_seconds > 0), 0) AS avg_duration
         FROM campaign_calls c LEFT JOIN languages l ON l.key=c.language_key
         WHERE c.campaign_id=%(cid)s AND c.eligibility='ok'
         GROUP BY COALESCE(c.language_key,'') ORDER BY placed DESC, name""",
@@ -286,12 +279,54 @@ def queue_calls(cid, language_key=None, call_ids=None, is_test=False):
     return n
 
 
-def claim_next_call():
-    """Takes one queued call for dialing; safe with several workers/pods."""
-    return _q("""UPDATE campaign_calls SET status='dialing', dialed_at=now(), updated_at=now()
-                 WHERE id = (SELECT id FROM campaign_calls WHERE status='queued'
-                             ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1)
-                 RETURNING *""", one=True)
+ACTIVE = ('dialing', 'ringing', 'in_progress')
+_CLAIM_LOCK = 727001
+
+
+def max_concurrent():
+    """How many calls may be live at once (Plivo limits channels). Default 1."""
+    try:
+        return max(1, int(os.environ.get('MAX_CONCURRENT_CALLS', '1')))
+    except ValueError:
+        return 1
+
+
+def claim_next_call(limit=None):
+    """Takes one queued call for dialing, but ONLY if fewer than `limit` calls
+    are currently live (dialing/ringing/in call). The advisory lock serialises
+    this check across every thread and pod, so two workers can never both see
+    'one free slot' and dial together. Returns None if the queue is empty or
+    all slots are busy."""
+    limit = limit or max_concurrent()
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (_CLAIM_LOCK,))
+        cur.execute("SELECT COUNT(*) AS n FROM campaign_calls WHERE status IN %s", (ACTIVE,))
+        if cur.fetchone()['n'] >= limit:
+            return None
+        cur.execute("""UPDATE campaign_calls SET status='dialing', dialed_at=now(), updated_at=now()
+                       WHERE id = (SELECT id FROM campaign_calls WHERE status='queued'
+                                   ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1)
+                       RETURNING *""")
+        return cur.fetchone()
+
+
+def count_active():
+    return _q("SELECT COUNT(*) AS n FROM campaign_calls WHERE status IN %s", (ACTIVE,), one=True)['n']
+
+
+def fail_stuck_active(seconds=None):
+    """A call whose final status never arrived (webhook lost/unreachable) must not
+    hold a channel forever and freeze the queue. After MAX_CALL_SECONDS without any
+    update it is marked failed (with a note) so the next call can go."""
+    if seconds is None:
+        try:
+            seconds = int(os.environ.get('MAX_CALL_SECONDS', '300'))
+        except ValueError:
+            seconds = 300
+    return _q("""UPDATE campaign_calls SET status='failed', updated_at=now(),
+                 error='No final status from provider within %s s; released so the queue can continue. Check Plivo logs for the real outcome.'
+                 WHERE status IN ('ringing','in_progress') AND updated_at < now() - make_interval(secs => %s)
+                 RETURNING id""" % (int(seconds), '%s'), (seconds,))
 
 
 def has_queued():
@@ -367,10 +402,7 @@ _COUNTS = """
     COUNT(*) FILTER (WHERE k.status IN %(ans)s) AS answered,
     COUNT(*) FILTER (WHERE k.status IN %(un)s) AS unanswered,
     COUNT(*) FILTER (WHERE k.status IN %(fail)s) AS failed,
-    COALESCE(AVG(k.duration_seconds) FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS avg_duration,
-    COALESCE(SUM(CEIL(k.duration_seconds / 60.0)) FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS billed_minutes,
-    COALESCE(SUM(CEIL(k.duration_seconds / 60.0) * c.cost_per_minute)
-             FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS cost"""
+    COALESCE(AVG(k.duration_seconds) FILTER (WHERE k.status IN %(ans)s AND k.duration_seconds > 0), 0) AS avg_duration"""
 _P = {'ans': ANSWERED, 'un': UNANSWERED, 'fail': FAILED}
 
 

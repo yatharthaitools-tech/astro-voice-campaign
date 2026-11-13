@@ -5,7 +5,6 @@ import os
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
 from functools import wraps
 from urllib.parse import urlparse
 
@@ -82,20 +81,8 @@ def create_app(init=True):
     @app.context_processor
     def _ctx():
         return {'csrf_token': csrf_token, 'status_labels': STATUS_LABELS,
-                'flag_labels': rules.FLAG_LABELS, 'provider': voice.provider_name()}
-
-    def money(rate, minutes):
-        return (Decimal(rate) * Decimal(minutes)).quantize(Decimal('0.01'))
-
-    def parse_rate(raw, default=None):
-        try:
-            rate = Decimal((raw or '').strip())
-        except InvalidOperation:
-            return default
-        return rate if 0 <= rate <= 1000 else default
-
-    def default_rate():
-        return parse_rate(os.environ.get('COST_PER_MINUTE'), Decimal('1.0'))
+                'flag_labels': rules.FLAG_LABELS, 'provider': voice.provider_name(),
+                'max_concurrent': db.max_concurrent()}
 
     def must_campaign(cid):
         c = db.get_campaign(cid)
@@ -138,9 +125,7 @@ def create_app(init=True):
         data = db.platform_analytics(date_from, date_to)
         t = data['totals']
         t['answer_rate'] = (t['answered'] * 100.0 / t['placed']) if t['placed'] else 0
-        t['cost'] = Decimal(t['cost']).quantize(Decimal('0.01'))
         for r in data['by_language'] + data['by_campaign']:
-            r['cost'] = Decimal(r['cost']).quantize(Decimal('0.01'))
             r['answer_rate'] = (r['answered'] * 100.0 / r['placed']) if r['placed'] else 0
         # Last 30 IST days, zero-filled so the chart has no gaps.
         today = datetime.now(IST).date()
@@ -159,7 +144,7 @@ def create_app(init=True):
     @login_required
     def campaigns_list():
         return render_template('home.html', campaigns=db.list_campaigns(), nav='campaigns',
-                               rate=default_rate(), not_ready=voice.check_ready())
+                               not_ready=voice.check_ready())
 
     @app.route('/campaigns', methods=['POST'])
     @login_required
@@ -174,8 +159,7 @@ def create_app(init=True):
         except rules.CsvError as e:
             flash(str(e), 'error')
             return redirect(url_for('campaigns_list'))
-        rate = parse_rate(request.form.get('rate'), default_rate())
-        cid = db.create_campaign(name or os.path.splitext(f.filename)[0], f.filename, rows, rate)
+        cid = db.create_campaign(name or os.path.splitext(f.filename)[0], f.filename, rows)
         flash(f'Imported {len(rows)} rows. Review the preview below, then launch.', 'ok')
         return redirect(url_for('campaign', cid=cid))
 
@@ -250,15 +234,11 @@ def create_app(init=True):
         summary = db.preview_summary(cid)
         results = db.report_by_language(cid)
         calls, total = db.list_calls(cid, lang, flag, status, PAGE_SIZE, (page - 1) * PAGE_SIZE)
-        rate = c['cost_per_minute']
         totals = {k: sum(r[k] for r in results) for k in ('placed', 'answered', 'unanswered', 'failed', 'in_flight')}
-        totals['minutes'] = sum(r['billed_minutes'] for r in results)
-        totals['cost'] = money(rate, totals['minutes'])
-        rows = [dict(r, cost=money(rate, r['billed_minutes'])) for r in results]
         pending_ready = sum(s['ready'] for s in summary)
         active = totals['in_flight'] > 0 or db.count_in_flight(cid) > 0
         return render_template(
-            'campaign.html', c=c, summary=summary, results=rows, totals=totals, calls=calls,
+            'campaign.html', c=c, summary=summary, results=results, totals=totals, calls=calls,
             total=total, page=page, pages=max(1, -(-total // PAGE_SIZE)), active_refresh=active,
             filters={'language': lang or '', 'flag': flag or '', 'status': status or ''},
             pending_ready=pending_ready, not_ready=voice.check_ready(), nav='campaigns',
@@ -310,18 +290,6 @@ def create_app(init=True):
             flash('Dialer is already running.', 'ok')
         return redirect(url_for('campaign', cid=cid))
 
-    @app.route('/campaigns/<int:cid>/rate', methods=['POST'])
-    @login_required
-    def set_rate(cid):
-        must_campaign(cid)
-        rate = parse_rate(request.form.get('rate'))
-        if rate is None:
-            flash('Enter a rate between 0 and 1000.', 'error')
-        else:
-            db.set_cost_per_minute(cid, rate)
-            flash('Cost rate updated.', 'ok')
-        return redirect(url_for('campaign', cid=cid))
-
     @app.route('/campaigns/<int:cid>/delete', methods=['POST'])
     @login_required
     def delete_campaign(cid):
@@ -336,7 +304,6 @@ def create_app(init=True):
     @login_required
     def report_csv(cid):
         c = must_campaign(cid)
-        rate = c['cost_per_minute']
 
         def safe(v):  # neutralise spreadsheet formula injection from uploaded text
             v = v or ''
@@ -345,7 +312,7 @@ def create_app(init=True):
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(['expert_name', 'phone_number', 'language', 'recording_used', 'call_status',
-                    'duration_seconds', 'estimated_cost', 'test_call', 'note'])
+                    'duration_seconds', 'test_call', 'note'])
         for r in db.all_calls_for_report(cid):
             if r['eligibility'] != 'ok':
                 status, note = 'Skipped', rules.FLAG_LABELS[r['eligibility']]
@@ -353,13 +320,11 @@ def create_app(init=True):
                 status, note = ('Not called', 'Recording not uploaded') if r['flag'] == 'no_recording' else ('Not called', '')
             else:
                 status, note = STATUS_LABELS.get(r['status'], r['status']), r['error'] or ''
-            answered = r['status'] in db.ANSWERED and (r['duration_seconds'] or 0) > 0
-            cost = money(rate, -(-r['duration_seconds'] // 60)) if answered else ''
             w.writerow([safe(r['expert_name']), r['phone_e164'] or safe(r['phone_raw']),
                         safe(r['language_name'] or r['language_raw']),
                         r['recording_used'] or (r['recording_label'] if r['status'] != 'pending' else ''),
                         status, r['duration_seconds'] if r['duration_seconds'] is not None else '',
-                        cost, 'yes' if r['is_test'] else '', safe(note)])
+                        'yes' if r['is_test'] else '', safe(note)])
         name = re.sub(r'[^A-Za-z0-9_-]+', '_', c['name'])[:40] or 'campaign'
         return Response('﻿' + buf.getvalue(), mimetype='text/csv',
                         headers={'Content-Disposition': f'attachment; filename={name}_report.csv'})

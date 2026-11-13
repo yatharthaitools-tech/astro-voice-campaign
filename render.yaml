@@ -33,7 +33,7 @@ services:
         sync: false
       - key: DEFAULT_COUNTRY_CODE
         value: "91"
+      - key: MAX_CONCURRENT_CALLS
+        value: "1"
       - key: CALLS_PER_SECOND
         value: "1"
-      - key: COST_PER_MINUTE
-        value: "1.0"

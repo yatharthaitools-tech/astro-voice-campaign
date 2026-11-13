@@ -25,15 +25,15 @@ stays reachable only there (the public host then serves just the Plivo endpoints
 
 ## 3. Before the real launch
 - [ ] Recordings page: all 8 languages show **Uploaded/URL**; play each once.
-- [ ] Campaign rate set to your real per-minute cost.
 - [ ] Make a small CSV of 3 numbers you own (different languages, `consent_status=Yes`),
-      launch it, answer, and confirm: correct language heard, status → Answered, duration and cost appear.
+      launch it, answer, and confirm: correct language heard, status → Answered, and the duration appears.
 - [ ] Also confirm an unanswered call shows **No answer** (not stuck on Ringing).
 - [ ] Confirm DND/telemarketing rules and that every `Yes` in the CSV is real, recorded consent.
 - [ ] Then upload the real 500-row CSV, check the summary table and flagged rows, launch.
 
 ## 4. Operating notes
-- Calls go out at `CALLS_PER_SECOND` (default 1 → ~8 minutes for 500). Raise only within your Plivo limits.
+- Calls go out **one at a time** (`MAX_CONCURRENT_CALLS=1`): the next starts only when the previous has ended. Raise it only to the number of channels your Plivo account has. 500 experts at ~1 min each ≈ 8 hours, so launch language-by-language across the day if needed.
+- A call whose final status never arrives is released after `MAX_CALL_SECONDS` (default 300) and marked Failed, so one lost callback can't freeze the queue.
 - If the server restarts mid-campaign, press **Resume dialing**. Interrupted dial attempts are
   marked Failed, never retried, so nobody is called twice.
 - Uploaded recordings are stored in Postgres; back up the database as you would anything else.

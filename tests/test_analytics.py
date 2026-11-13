@@ -27,7 +27,7 @@ def test_platform_numbers_across_two_campaigns(post, drain, client):
     from voicecampaign import db
     cid1 = make_campaign(post)
     post(f'/campaigns/{cid1}/launch', data={'language': 'all'}); drain()
-    r = post('/campaigns', data={'name': 'Second', 'rate': '1', 'csv': (io.BytesIO(CSV), 'y.csv')},
+    r = post('/campaigns', data={'name': 'Second', 'csv': (io.BytesIO(CSV), 'y.csv')},
              content_type='multipart/form-data')
     cid2 = int(r.headers['Location'].rsplit('/', 1)[1])
     post(f'/campaigns/{cid2}/launch', data={'language': 'tamil'}); drain()
@@ -36,15 +36,15 @@ def test_platform_numbers_across_two_campaigns(post, drain, client):
     assert t['campaigns'] == 2 and t['experts'] == 16
     # campaign 1: 4 placed (Asha 20s ans, Bala 55s ans, Chitra no-answer, Gita failed); campaign 2: Bala only
     assert (t['placed'], t['answered'], t['unanswered'], t['failed']) == (5, 3, 1, 1)
-    # billed minutes: 1 + 1 + 1 ; rates 2 (campaign 1) and 1 (campaign 2) -> 2 + 2 + 1
-    assert float(t['cost']) == 5.0
+    assert 'cost' not in t and 'billed_minutes' not in t
+    assert round(float(t['avg_duration'])) == 43  # (20 + 55 + 55) / 3 answered calls
     tamil = next(r for r in a['by_language'] if r['key'] == 'tamil')
     assert tamil['placed'] == 2 and tamil['answered'] == 2
     reasons = {r['reason']: r['n'] for r in a['skipped']}
     assert reasons == {'missing_language': 2, 'no_consent': 2, 'duplicate': 2}
     assert sum(r['placed'] for r in a['trend']) == 5
     page = client.get('/').get_data(as_text=True)
-    assert 'Diwali' in page and 'Second' in page and '5.00' in page
+    assert 'Diwali' in page and 'Second' in page and 'cost' not in page.lower()
 
 
 def test_date_filter_excludes_old_window(post, drain, client):

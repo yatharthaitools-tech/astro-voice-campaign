@@ -14,16 +14,15 @@
 <div class="stat"><b>{{ t.answered }}</b><span>Answered</span></div>
 <div class="stat"><b>{{ '%.1f'|format(t.answer_rate) }}%</b><span>Answer rate</span></div>
 <div class="stat"><b>{{ '%d:%02d'|format((t.avg_duration|int)//60, (t.avg_duration|int)%60) }}</b><span>Avg call duration</span></div>
-<div class="stat"><b>{{ '%.2f'|format(t.cost) }}</b><span>Estimated cost ({{ t.billed_minutes|int }} billed min)</span></div>
 </div>
 
 <h2>By language</h2>
-<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Experts</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">No answer / busy</th><th class="n">Failed</th><th style="min-width:150px">Answer rate</th><th class="n">Avg duration</th><th class="n">Est. cost</th></tr></thead><tbody>
+<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Experts</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">No answer / busy</th><th class="n">Failed</th><th style="min-width:150px">Answer rate</th><th class="n">Avg duration</th></tr></thead><tbody>
 {% for r in d.by_language %}<tr><td><b>{{ r.name }}</b></td><td class="n">{{ r.experts }}</td><td class="n">{{ r.placed }}</td><td class="n">{{ r.answered }}</td><td class="n">{{ r.unanswered }}</td><td class="n">{{ r.failed }}</td>
 <td>{% if r.placed %}<div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:8px;background:var(--line);border-radius:4px;overflow:hidden" title="{{ '%.1f'|format(r.answer_rate) }}%"><div style="width:{{ r.answer_rate }}%;height:100%;background:var(--good)"></div></div><span class="mono">{{ '%.0f'|format(r.answer_rate) }}%</span></div>{% else %}—{% endif %}</td>
-<td class="n">{{ '%d:%02d'|format((r.avg_duration|int)//60, (r.avg_duration|int)%60) }}</td><td class="n">{{ '%.2f'|format(r.cost) }}</td></tr>
-{% else %}<tr><td colspan="9">No data yet. <a href="{{ url_for('campaigns_list') }}">Create a campaign</a>.</td></tr>{% endfor %}</tbody>
-{% if d.by_language %}<tfoot><tr><td>Total</td><td class="n">{{ d.by_language|sum(attribute='experts') }}</td><td class="n">{{ t.placed }}</td><td class="n">{{ t.answered }}</td><td class="n">{{ t.unanswered }}</td><td class="n">{{ t.failed }}</td><td></td><td></td><td class="n">{{ '%.2f'|format(t.cost) }}</td></tr></tfoot>{% endif %}</table></div>
+<td class="n">{{ '%d:%02d'|format((r.avg_duration|int)//60, (r.avg_duration|int)%60) }}</td></tr>
+{% else %}<tr><td colspan="8">No data yet. <a href="{{ url_for('campaigns_list') }}">Create a campaign</a>.</td></tr>{% endfor %}</tbody>
+{% if d.by_language %}<tfoot><tr><td>Total</td><td class="n">{{ d.by_language|sum(attribute='experts') }}</td><td class="n">{{ t.placed }}</td><td class="n">{{ t.answered }}</td><td class="n">{{ t.unanswered }}</td><td class="n">{{ t.failed }}</td><td></td><td></td></tr></tfoot>{% endif %}</table></div>
 
 <h2>Calls per day <span class="sub" style="font-weight:400">(last 30 days, IST)</span></h2>
 <div class="card"><div style="display:flex;align-items:flex-end;gap:3px;height:120px" role="img" aria-label="Calls per day for the last 30 days">
@@ -41,8 +40,7 @@
 {% else %}<span class="sub">No skipped experts.</span>{% endif %}</div>
 
 <h2>Campaigns</h2>
-<div class="card scroll"><table><thead><tr><th>Campaign</th><th>Created</th><th class="n">Experts</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">Failed</th><th class="n">Answer rate</th><th class="n">Est. cost</th></tr></thead><tbody>
-{% for c in d.by_campaign %}<tr><td><a href="{{ url_for('campaign', cid=c.id) }}">{{ c.name }}</a></td><td>{{ c.created_at|ist }}</td><td class="n">{{ c.experts }}</td><td class="n">{{ c.placed }}</td><td class="n">{{ c.answered }}</td><td class="n">{{ c.failed }}</td><td class="n">{{ '%.0f'|format(c.answer_rate) if c.placed else '—' }}{{ '%' if c.placed }}</td><td class="n">{{ '%.2f'|format(c.cost) }}</td></tr>
-{% else %}<tr><td colspan="8">No campaigns yet.</td></tr>{% endfor %}</tbody></table></div>
-<p class="sub">Cost is an estimate: answered calls rounded up to whole minutes × each campaign’s rate.</p>
+<div class="card scroll"><table><thead><tr><th>Campaign</th><th>Created</th><th class="n">Experts</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">Failed</th><th class="n">Answer rate</th></tr></thead><tbody>
+{% for c in d.by_campaign %}<tr><td><a href="{{ url_for('campaign', cid=c.id) }}">{{ c.name }}</a></td><td>{{ c.created_at|ist }}</td><td class="n">{{ c.experts }}</td><td class="n">{{ c.placed }}</td><td class="n">{{ c.answered }}</td><td class="n">{{ c.failed }}</td><td class="n">{{ '%.0f'|format(c.answer_rate) if c.placed else '—' }}{{ '%' if c.placed }}</td></tr>
+{% else %}<tr><td colspan="7">No campaigns yet.</td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}

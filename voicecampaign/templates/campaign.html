@@ -21,20 +21,20 @@
 {% for s in summary if s.key and s.has_audio and s.ready %}<option value="{{ s.key }}">{{ s.name }} only ({{ s.ready }})</option>{% endfor %}</select>
 <button>Launch campaign</button></form>
 <form method="post" action="{{ url_for('resume', cid=c.id) }}">{{ csrf() }}<button class="ghost" title="Restart the dialer if the server was restarted while calls were queued">Resume dialing</button></form>
-<form method="post" action="{{ url_for('set_rate', cid=c.id) }}" class="row" style="margin-left:auto">{{ csrf() }}<label class="sub" style="margin:0">Cost / billed min <input type="number" name="rate" value="{{ c.cost_per_minute }}" step="0.01" min="0" style="width:80px"></label><button class="ghost">Save</button></form>
 </div>
+<p class="sub">Calls are placed {{ 'one at a time' if max_concurrent == 1 else max_concurrent ~ ' at a time' }} (Plivo channel limit): the next call starts only after the previous one ends.</p>
 <p class="sub">To test first, tick a few experts in the table below and use “Send test call”. A tested expert counts as called, so the full launch will skip them.</p>
 
 <h2>3. Results</h2>
 <div class="stats"><div class="stat"><b>{{ totals.placed }}</b><span>Calls placed</span></div><div class="stat"><b>{{ totals.answered }}</b><span>Answered</span></div>
 <div class="stat"><b>{{ totals.unanswered }}</b><span>No answer / busy</span></div><div class="stat"><b>{{ totals.failed }}</b><span>Failed</span></div>
-<div class="stat"><b>{{ '%.2f'|format(totals.cost) }}</b><span>Estimated cost ({{ totals.minutes|int }} billed min)</span></div></div>
-<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">No answer / busy</th><th class="n">Failed</th><th class="n">In progress</th><th class="n">Avg duration</th><th class="n">Est. cost</th></tr></thead><tbody>
+</div>
+<div class="card scroll"><table><thead><tr><th>Language</th><th class="n">Calls</th><th class="n">Answered</th><th class="n">No answer / busy</th><th class="n">Failed</th><th class="n">In progress</th><th class="n">Avg duration</th></tr></thead><tbody>
 {% for r in results %}<tr><td><b>{{ r.name }}</b></td><td class="n">{{ r.placed }}</td><td class="n">{{ r.answered }}</td><td class="n">{{ r.unanswered }}</td><td class="n">{{ r.failed }}</td><td class="n">{{ r.in_flight }}</td>
-<td class="n">{{ '%d:%02d'|format((r.avg_duration|int)//60, (r.avg_duration|int)%60) }}</td><td class="n">{{ '%.2f'|format(r.cost) }}</td></tr>
-{% else %}<tr><td colspan="8">No calls placed yet.</td></tr>{% endfor %}</tbody>
-<tfoot><tr><td>Total</td><td class="n">{{ totals.placed }}</td><td class="n">{{ totals.answered }}</td><td class="n">{{ totals.unanswered }}</td><td class="n">{{ totals.failed }}</td><td class="n">{{ totals.in_flight }}</td><td></td><td class="n">{{ '%.2f'|format(totals.cost) }}</td></tr></tfoot></table></div>
-<p class="sub">Cost = answered calls rounded up to whole minutes × the rate above. It is an estimate — check your provider’s invoice for the exact figure.{% if active_refresh %} This page refreshes while calls are in progress.{% endif %}</p>
+<td class="n">{{ '%d:%02d'|format((r.avg_duration|int)//60, (r.avg_duration|int)%60) }}</td></tr>
+{% else %}<tr><td colspan="7">No calls placed yet.</td></tr>{% endfor %}</tbody>
+<tfoot><tr><td>Total</td><td class="n">{{ totals.placed }}</td><td class="n">{{ totals.answered }}</td><td class="n">{{ totals.unanswered }}</td><td class="n">{{ totals.failed }}</td><td class="n">{{ totals.in_flight }}</td><td></td></tr></tfoot></table></div>
+<p class="sub">{% if active_refresh %} This page refreshes while calls are in progress.{% endif %}</p>
 
 <h2>4. Experts &amp; mapping</h2>
 <form method="get" class="row" style="margin-bottom:10px">
