@@ -6,6 +6,8 @@ own language**. No per-language campaigns.
 
 ## How it works
 
+The app opens on **Analytics** (platform-wide: calls, answer rate, avg duration, by language, calls per day, skipped-expert reasons, per-campaign table). **Campaigns** and **Recordings** are the other tabs.
+
 1. **Recordings** (`/languages`) — per language, upload an `.mp3`/`.wav` or paste a
    public URL. Hindi, English, Tamil, Telugu, Malayalam, Kannada, Bengali and Marathi
    are pre-created; add more any time. A language that appears in a CSV but isn't
@@ -21,8 +23,8 @@ own language**. No per-language campaigns.
    campaign (enforced atomically in the DB, plus a unique index); a tested expert
    counts as called.
 5. **Results** — per language: calls, answered, no answer/busy, failed, average
-   duration, estimated cost; overall cost; CSV report (expert, phone, language,
-   recording used, call status, duration, cost).
+   duration; CSV report (expert, phone, language,
+   recording used, call status, duration).
 
 Consent: only `Yes`/`Y`/`True`/`1` (case-insensitive) is treated as consent; blank or anything else is skipped.
 Phone numbers are normalised to E.164 (10-digit Indian numbers get `+91`; set `DEFAULT_COUNTRY_CODE` to change).
@@ -40,8 +42,8 @@ Phone numbers are normalised to E.164 (10-digit Indian numbers get `+91`; set `D
 `PUBLIC_BASE_URL` must be reachable from the internet over HTTPS (providers fetch uploaded
 recordings from `/audio/<token>.mp3`). Another provider = one new function in `voicecampaign/voice.py`.
 
+Calls are placed one at a time by default (`MAX_CONCURRENT_CALLS`, to respect Plivo's channel limit).
 Calls are never retried automatically — a failed or ambiguous attempt is final, so nobody is called twice.
-Cost is an **estimate**: answered calls rounded up to whole minutes × the per-minute rate set on the campaign.
 
 ## Deploy
 

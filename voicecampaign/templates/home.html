@@ -7,7 +7,6 @@
 <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
 <div class="row"><input type="text" name="name" placeholder="Campaign name" maxlength="80">
 <input type="file" name="csv" accept=".csv,text/csv" required>
-<label>Cost / billed minute <input type="number" name="rate" value="{{ rate }}" step="0.01" min="0" style="width:90px"></label>
 <button>Upload &amp; preview</button></div>
 <p class="sub" style="margin:10px 0 0">CSV columns: <span class="mono">expert_name, phone_number, language, consent_status</span>. Nothing is called until you launch from the preview.</p>
 </form>

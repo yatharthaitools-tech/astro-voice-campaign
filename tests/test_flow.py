@@ -22,7 +22,7 @@ def add_audio(post, key):
 def make_campaign(post):
     for k in ('hindi', 'tamil', 'telugu'):
         add_audio(post, k)
-    r = post('/campaigns', data={'name': 'Diwali', 'csv': (io.BytesIO(CSV), 'x.csv'), 'rate': '2'},
+    r = post('/campaigns', data={'name': 'Diwali', 'csv': (io.BytesIO(CSV), 'x.csv')},
              content_type='multipart/form-data')
     assert r.status_code == 302
     return int(r.headers['Location'].rsplit('/', 1)[1])
@@ -135,16 +135,16 @@ def test_report_numbers_and_csv(post, client, drain):
     rep = {r['key']: r for r in db.report_by_language(cid)}
     # Hindi: Asha answered (20s), Gita failed
     assert (rep['hindi']['placed'], rep['hindi']['answered'], rep['hindi']['failed']) == (2, 1, 1)
-    assert float(rep['hindi']['avg_duration']) == 20 and rep['hindi']['billed_minutes'] == 1
-    assert rep['telugu']['unanswered'] == 1 and rep['telugu']['billed_minutes'] == 0
-    assert rep['tamil']['billed_minutes'] == 1  # 55s rounds up to 1 minute
+    assert float(rep['hindi']['avg_duration']) == 20 and 'billed_minutes' not in rep['hindi']
+    assert rep['telugu']['unanswered'] == 1 and rep['telugu']['avg_duration'] == 0
+    assert float(rep['tamil']['avg_duration']) == 55
     csv_text = client.get(f'/campaigns/{cid}/report.csv').get_data(as_text=True)
     lines = csv_text.lstrip('﻿').splitlines()
     assert lines[0].startswith('expert_name,phone_number,language,recording_used,call_status')
     assert len(lines) == 1 + 8
     assert 'Esha' in csv_text and 'Skipped' in csv_text and 'Language missing' in csv_text
     page = client.get(f'/campaigns/{cid}').get_data(as_text=True)
-    assert '4.00' in page  # 2 billed minutes (Asha 20s, Bala 55s) x rate 2
+    assert 'cost' not in page.lower() and 'Avg duration' in page
 
 
 def test_csv_formula_injection_is_neutralised(post, client):

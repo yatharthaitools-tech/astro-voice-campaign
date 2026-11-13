@@ -106,8 +106,11 @@ def _plivo(call):
                 'to': call['phone_e164'].lstrip('+'),
                 'answer_url': plivo_answer_url(call['id']),
                 'answer_method': 'GET',
-                'callback_url': plivo_status_url(call['id']),
-                'callback_method': 'POST',
+                # Plivo reports the final outcome (CallStatus, Duration) to
+                # hangup_url. callback_url is NOT a call-status hook (it is for
+                # recordings), so a call would otherwise stay 'ringing' forever.
+                'hangup_url': plivo_status_url(call['id']),
+                'hangup_method': 'POST',
             })
     except requests.RequestException as e:
         raise ProviderError(f"Network error talking to Plivo (call may or may not have been placed): {e}")
