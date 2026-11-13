@@ -68,5 +68,7 @@ pip install -r requirements-dev.txt && pytest
 ## Notes
 
 - Single admin login from `ADMIN_EMAIL` / `ADMIN_PASSWORD`; CSRF-protected forms. Put it behind HTTPS.
-- The dialer runs in-process at `CALLS_PER_SECOND`; if the server restarts mid-campaign, press "Resume dialing".
+- The dialer runs in-process at `CALLS_PER_SECOND` and keeps at most `MAX_CONCURRENT_CALLS` (default 2)
+  experts on the line at once; a line frees up when the provider reports the hangup, or after 5 minutes
+  of silence. If the server restarts mid-campaign, press "Resume dialing".
 - Check local telemarketing/DND and consent rules for your numbers before a live launch.

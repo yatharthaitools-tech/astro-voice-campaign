@@ -95,3 +95,44 @@ def test_plivo_status_callbacks(plivo_env, post, app):
                                         ('failed', 'failed'), ('cancel', 'canceled'), ('weird', None)])
 def test_plivo_status_mapping(plivo, ours):
     assert voice.map_plivo_status(plivo) == ours
+
+
+def test_dialer_keeps_at_most_max_concurrent_calls_live(plivo_env, post, drain, monkeypatch):
+    """With MAX_CONCURRENT_CALLS=1 the second expert is not dialed until the
+    first call has hung up (reported by the status webhook)."""
+    from voicecampaign import dispatcher
+    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '1')
+    live_at_dial, hung_up = [], []
+
+    def fake_post(url, **kw):
+        live_at_dial.append(db.count_live_calls())
+        return FakeResp(201, {'message': 'call fired', 'request_uuid': 'uuid-%d' % len(live_at_dial)})
+    monkeypatch.setattr(voice.requests, 'post', fake_post)
+
+    def fake_sleep(_):
+        # Stand in for Plivo's hangup webhook: the ringing call completes, freeing the line.
+        with db.connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM campaign_calls WHERE status='ringing' ORDER BY id LIMIT 1")
+            row = cur.fetchone()
+        assert row, 'dialer waited although no call was live'
+        db.apply_status_update(row['id'], 'completed', 30)
+        hung_up.append(row['id'])
+    monkeypatch.setattr(dispatcher.time, 'sleep', fake_sleep)
+
+    cid = make_campaign(post)
+    post(f'/campaigns/{cid}/launch', data={'language': 'all'}); drain()
+    placed = [r for r in by_name(cid).values() if r['provider_sid']]
+    assert len(placed) >= 2 and len(hung_up) == len(placed) - 1
+    assert live_at_dial == [0] * len(placed)          # never dialed while another call was live
+    assert all(r['status'] == 'completed' for r in placed[:-1])
+
+
+def test_dialer_unlimited_when_max_concurrent_is_zero(plivo_env, post, drain, monkeypatch):
+    from voicecampaign import dispatcher
+    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '0')
+    monkeypatch.setattr(voice.requests, 'post',
+                        lambda url, **kw: FakeResp(201, {'request_uuid': url[-4:]}))
+    monkeypatch.setattr(dispatcher.time, 'sleep', lambda _: pytest.fail('should not wait for a line'))
+    cid = make_campaign(post)
+    post(f'/campaigns/{cid}/launch', data={'language': 'all'}); drain()
+    assert all(r['status'] == 'ringing' for r in by_name(cid).values() if r['provider_sid'])

@@ -1,6 +1,7 @@
 """Background dialer. Queued rows are claimed one at a time (FOR UPDATE SKIP
 LOCKED), so any number of threads/pods can run this safely, and a restart just
-resumes whatever is still 'queued'. Calls are paced at CALLS_PER_SECOND."""
+resumes whatever is still 'queued'. Calls are paced at CALLS_PER_SECOND and at
+most MAX_CONCURRENT_CALLS experts are on the line at any moment."""
 import logging
 import os
 import threading
@@ -19,6 +20,28 @@ def _pace():
     except ValueError:
         cps = 1.0
     return 1.0 / cps if cps > 0 else 1.0
+
+
+SLOT_POLL_SECONDS = 2        # how often to re-check for a free line
+LIVE_CALL_MAX_MINUTES = 5    # a call silent this long no longer occupies a line
+
+
+def _max_concurrent():
+    """0 means unlimited."""
+    try:
+        n = int(os.environ.get('MAX_CONCURRENT_CALLS', '2'))
+    except ValueError:
+        n = -1
+    return n if n >= 0 else 2
+
+
+def wait_for_free_line():
+    """Blocks until fewer than MAX_CONCURRENT_CALLS calls are live. A line is
+    freed by the provider's hangup webhook, or by the age cut-off in
+    db.count_live_calls when that webhook never comes."""
+    limit = _max_concurrent()
+    while limit and db.count_live_calls(LIVE_CALL_MAX_MINUTES) >= limit:
+        time.sleep(SLOT_POLL_SECONDS)
 
 
 def dial_one():
@@ -45,7 +68,10 @@ def dial_one():
 
 def drain(pace=True):
     db.fail_stale_dialing()
-    while dial_one():
+    while db.has_queued():
+        wait_for_free_line()
+        if not dial_one():
+            break
         if pace:
             time.sleep(_pace())
 
