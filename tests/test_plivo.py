@@ -44,6 +44,9 @@ def test_plivo_dispatch_request_shape(plivo_env, post, drain, monkeypatch):
     assert body['to'] == '919876543215' and body['from'] == '911234567890'
     bala = by_name(cid)['Bala']
     assert body['answer_url'].startswith(f"https://voice.test/webhooks/plivo/answer/{bala['id']}?t=")
+    # Final status + duration arrive on hangup_url; callback_url is a recording hook, not a status one.
+    assert body['hangup_url'].startswith(f"https://voice.test/webhooks/plivo/status/{bala['id']}?t=")
+    assert body['hangup_method'] == 'POST' and 'callback_url' not in body
     assert bala['status'] == 'ringing' and bala['provider_sid'] == 'uuid-1'
 
 
@@ -67,6 +70,11 @@ def test_plivo_answer_plays_the_experts_language(plivo_env, post, app):
     assert xml.status_code == 200 and xml.mimetype == 'text/xml'
     assert f'<Play>https://voice.test/audio/{tamil}.mp3</Play>' in xml.get_data(as_text=True)
     assert tamil in db.get_call(rows['Bala']['id'])['recording_used']
+    # the answer fetch carries CallStatus=in-progress: the call is now answered
+    with db.connect() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE campaign_calls SET status='ringing' WHERE id=%s", (rows['Bala']['id'],))
+    anon.get(f"/webhooks/plivo/answer/{rows['Bala']['id']}?t={tok(rows['Bala'])}&CallStatus=in-progress&Event=StartApp")
+    assert db.get_call(rows['Bala']['id'])['status'] == 'in_progress'
     # a language with no recording hangs up instead of playing nothing
     assert '<Hangup/>' in anon.get(f"/webhooks/plivo/answer/{rows['Dev']['id']}?t={tok(rows['Dev'])}").get_data(as_text=True)
     # wrong / missing token is refused

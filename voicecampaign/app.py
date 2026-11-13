@@ -350,6 +350,10 @@ def create_app(init=True):
         xml = voice.plivo_xml_play(url) if url else voice.PLIVO_HANGUP_XML
         if url:
             db.set_recording_used(call_id, url)
+        # Plivo fetches this with CallStatus=in-progress once the expert picks up.
+        answered = voice.map_plivo_status(request.values.get('CallStatus'))
+        if call and answered == 'in_progress':
+            db.apply_status_update(call_id, answered)
         return Response(xml, mimetype='text/xml')
 
     @app.route('/webhooks/plivo/status/<int:call_id>', methods=['POST'])
