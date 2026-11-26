@@ -42,7 +42,8 @@ Phone numbers are normalised to E.164 (10-digit Indian numbers get `+91`; set `D
 `PUBLIC_BASE_URL` must be reachable from the internet over HTTPS (providers fetch uploaded
 recordings from `/audio/<token>.mp3`). Another provider = one new function in `voicecampaign/voice.py`.
 
-Calls are placed one at a time by default (`MAX_CONCURRENT_CALLS`, to respect Plivo's channel limit).
+At most `MAX_CONCURRENT_CALLS` calls are live at once (default 2, to respect Plivo's channel limit;
+`0` or an invalid value means 1, there is no unlimited mode).
 Calls are never retried automatically — a failed or ambiguous attempt is final, so nobody is called twice.
 
 ## Deploy
@@ -71,6 +72,8 @@ pip install -r requirements-dev.txt && pytest
 
 - Single admin login from `ADMIN_EMAIL` / `ADMIN_PASSWORD`; CSRF-protected forms. Put it behind HTTPS.
 - The dialer runs in-process at `CALLS_PER_SECOND` and keeps at most `MAX_CONCURRENT_CALLS` (default 2)
-  experts on the line at once; a line frees up when the provider reports the hangup, or after 5 minutes
-  of silence. If the server restarts mid-campaign, press "Resume dialing".
+  experts on the line at once. The slot check runs under a Postgres advisory lock, so several workers or
+  pods together still stay within the limit. A line frees up when the provider reports the hangup, or
+  after `MAX_CALL_SECONDS` (default 300) with no update, when the call is marked Failed.
+  If the server restarts mid-campaign, press "Resume dialing".
 - Check local telemarketing/DND and consent rules for your numbers before a live launch.

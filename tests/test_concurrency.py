@@ -23,7 +23,8 @@ def finish(call_id):
         cur.execute("UPDATE campaign_calls SET status='completed', duration_seconds=30 WHERE id=%s", (call_id,))
 
 
-def test_one_call_at_a_time(post, drain, plivo_calls):
+def test_one_call_at_a_time(post, drain, plivo_calls, monkeypatch):
+    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '1')
     cid = make_campaign(post)
     post(f'/campaigns/{cid}/launch', data={'language': 'all'})  # 4 callable experts queued
     drain()
@@ -42,14 +43,23 @@ def test_one_call_at_a_time(post, drain, plivo_calls):
     assert len(plivo_calls) == 4 and len(set(plivo_calls)) == 4  # each expert exactly once
 
 
-def test_limit_is_configurable_to_plivo_channels(post, drain, plivo_calls, monkeypatch):
-    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '2')
+def test_default_limit_is_two(post, drain, plivo_calls, monkeypatch):
+    monkeypatch.delenv('MAX_CONCURRENT_CALLS', raising=False)
+    assert db.max_concurrent() == 2
     cid = make_campaign(post)
     post(f'/campaigns/{cid}/launch', data={'language': 'all'}); drain()
     assert len(plivo_calls) == 2 and db.count_active() == 2
 
 
+def test_limit_is_configurable_to_plivo_channels(post, drain, plivo_calls, monkeypatch):
+    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '3')
+    cid = make_campaign(post)
+    post(f'/campaigns/{cid}/launch', data={'language': 'all'}); drain()
+    assert len(plivo_calls) == 3 and db.count_active() == 3
+
+
 def test_bad_limit_value_falls_back_to_one(monkeypatch):
+    """There is no "unlimited" setting: Plivo caps channels regardless."""
     for v in ('0', '-3', 'abc', ''):
         monkeypatch.setenv('MAX_CONCURRENT_CALLS', v)
         assert db.max_concurrent() == 1
@@ -71,6 +81,7 @@ def test_parallel_workers_cannot_exceed_the_limit(post, plivo_calls):
 
 
 def test_lost_callback_does_not_freeze_the_queue(post, drain, plivo_calls, monkeypatch):
+    monkeypatch.setenv('MAX_CONCURRENT_CALLS', '1')
     monkeypatch.setenv('MAX_CALL_SECONDS', '60')
     cid = make_campaign(post)
     post(f'/campaigns/{cid}/launch', data={'language': 'all'}); drain()

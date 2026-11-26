@@ -32,7 +32,7 @@ stays reachable only there (the public host then serves just the Plivo endpoints
 - [ ] Then upload the real 500-row CSV, check the summary table and flagged rows, launch.
 
 ## 4. Operating notes
-- Calls go out **one at a time** (`MAX_CONCURRENT_CALLS=1`): the next starts only when the previous has ended. Raise it only to the number of channels your Plivo account has. 500 experts at ~1 min each ≈ 8 hours, so launch language-by-language across the day if needed.
+- At most `MAX_CONCURRENT_CALLS` calls are live at once (default and blueprint value `2`): the next starts only when a live one has ended. Set it to the number of channels your Plivo account has, never more (`0` or an invalid value means 1). 500 experts at ~1 min each over 2 channels ≈ 4 hours, so launch language-by-language across the day if needed.
 - A call whose final status never arrives is released after `MAX_CALL_SECONDS` (default 300) and marked Failed, so one lost callback can't freeze the queue.
 - If the server restarts mid-campaign, press **Resume dialing**. Interrupted dial attempts are
   marked Failed, never retried, so nobody is called twice.
