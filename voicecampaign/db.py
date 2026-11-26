@@ -252,19 +252,6 @@ def report_by_language(cid):
               {'cid': cid, 'ans': ANSWERED, 'un': UNANSWERED, 'fail': FAILED, 'fly': IN_FLIGHT})
 
 
-LIVE = ('dialing', 'ringing', 'in_progress')   # someone's phone is (about to be) ringing or playing
-
-
-def count_live_calls(max_age_minutes=5):
-    """Calls currently on the line, across all campaigns. A call that has
-    not changed state in max_age_minutes is assumed over even if the
-    provider's hangup report never arrived, so one lost webhook can't stall
-    the dialer forever."""
-    return _q("""SELECT COUNT(*) AS n FROM campaign_calls
-                 WHERE status IN %s AND updated_at > now() - make_interval(mins => %s)""",
-              (LIVE, max_age_minutes), one=True)['n']
-
-
 def count_in_flight(cid):
     return _q("SELECT COUNT(*) AS n FROM campaign_calls WHERE campaign_id=%s AND status IN %s",
               (cid, IN_FLIGHT + ('in_progress',)), one=True)['n']
@@ -297,9 +284,11 @@ _CLAIM_LOCK = 727001
 
 
 def max_concurrent():
-    """How many calls may be live at once (Plivo limits channels). Default 1."""
+    """How many calls may be live at once (Plivo limits channels). Default 2
+    when unset; a zero, negative or non-numeric value falls back to 1, the
+    safest setting, rather than meaning "unlimited"."""
     try:
-        return max(1, int(os.environ.get('MAX_CONCURRENT_CALLS', '1')))
+        return max(1, int(os.environ.get('MAX_CONCURRENT_CALLS', '2')))
     except ValueError:
         return 1
 

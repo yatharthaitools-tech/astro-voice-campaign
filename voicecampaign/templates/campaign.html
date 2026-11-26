@@ -22,7 +22,7 @@
 <button>Launch campaign</button></form>
 <form method="post" action="{{ url_for('resume', cid=c.id) }}">{{ csrf() }}<button class="ghost" title="Restart the dialer if the server was restarted while calls were queued">Resume dialing</button></form>
 </div>
-<p class="sub">Calls are placed {{ 'one at a time' if max_concurrent == 1 else max_concurrent ~ ' at a time' }} (Plivo channel limit): the next call starts only after the previous one ends.</p>
+<p class="sub">Calls are placed {{ 'one at a time' if max_concurrent == 1 else max_concurrent ~ ' at a time' }} (Plivo channel limit): {{ 'the next call starts only after the previous one ends.' if max_concurrent == 1 else 'the next call starts only when a live one ends.' }}</p>
 <p class="sub">To test first, tick a few experts in the table below and use “Send test call”. A tested expert counts as called, so the full launch will skip them.</p>
 
 <h2>3. Results</h2>
