@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS campaigns (
     name TEXT NOT NULL,
     source_filename TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    first_launched_at TIMESTAMPTZ
+    first_launched_at TIMESTAMPTZ,
+    stopped_at TIMESTAMPTZ            -- set by "Stop campaign", cleared by the next launch
 );
 
 CREATE TABLE IF NOT EXISTS campaign_calls (
@@ -58,6 +59,8 @@ CREATE TABLE IF NOT EXISTS campaign_calls (
     error TEXT,
     queued_at TIMESTAMPTZ,
     dialed_at TIMESTAMPTZ,
+    answered_at TIMESTAMPTZ,          -- when the expert picked up
+    ended_at TIMESTAMPTZ,             -- when the call reached a final status
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- The hard guarantee behind "no duplicate calls in a campaign".
@@ -65,6 +68,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_phone
     ON campaign_calls(campaign_id, phone_e164) WHERE eligibility = 'ok';
 CREATE INDEX IF NOT EXISTS idx_calls_campaign ON campaign_calls(campaign_id, status);
 CREATE INDEX IF NOT EXISTS idx_calls_sid ON campaign_calls(provider_sid);
+-- Columns added after the first release; no-ops on a fresh database.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS stopped_at TIMESTAMPTZ;
+ALTER TABLE campaign_calls ADD COLUMN IF NOT EXISTS answered_at TIMESTAMPTZ;
+ALTER TABLE campaign_calls ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 """
 
 # SQL fragments reused by several queries. has_audio never reads the bytea.
@@ -76,6 +83,16 @@ UNANSWERED = ('busy', 'no_answer')
 FAILED = ('failed', 'canceled')
 IN_FLIGHT = ('queued', 'dialing', 'ringing')
 TERMINAL = ('completed', 'busy', 'no_answer', 'failed', 'canceled')
+
+# Stamps answer/end times from the status being written (%(st)s, duration %(dur)s).
+# A call reported 'completed' without a prior answer event gets an answer time
+# of end - duration, the best estimate available.
+STAMP_TIMES = """
+    answered_at = CASE WHEN %(st)s IN ('in_progress', 'completed')
+                       THEN COALESCE(answered_at, now() - make_interval(secs => COALESCE(%(dur)s, 0)))
+                       ELSE answered_at END,
+    ended_at = CASE WHEN %(st)s IN ('completed', 'busy', 'no_answer', 'failed', 'canceled')
+                    THEN COALESCE(ended_at, now()) ELSE ended_at END"""
 
 
 @contextmanager
@@ -192,6 +209,49 @@ def get_campaign(cid):
     return _q("SELECT * FROM campaigns WHERE id=%s", (cid,), one=True)
 
 
+def campaign_timing(cid):
+    """Start, end and state of a campaign's calling.
+    started_at = first full launch. The campaign is running while any of its
+    calls is queued or on the line. Once nothing is, it has ended: at the stop
+    time if it was stopped, otherwise when its last call finished."""
+    row = _q("""SELECT c.first_launched_at AS started_at, c.stopped_at,
+                      COUNT(k.id) FILTER (WHERE k.status = 'queued') AS queued,
+                      COUNT(k.id) FILTER (WHERE k.status IN ('dialing', 'ringing', 'in_progress')) AS live,
+                      MAX(k.ended_at) AS last_call_ended_at
+               FROM campaigns c LEFT JOIN campaign_calls k ON k.campaign_id = c.id
+               WHERE c.id = %s GROUP BY c.id""", (cid,), one=True)
+    if not row:
+        return None
+    if row['queued'] or row['live']:
+        state = 'stopping' if row['stopped_at'] and not row['queued'] else 'running'
+        ended_at = None
+    elif row['stopped_at']:
+        state, ended_at = 'stopped', row['stopped_at']
+    elif row['started_at']:
+        state, ended_at = 'finished', row['last_call_ended_at']
+    else:
+        state, ended_at = 'draft', None
+    return {'started_at': row['started_at'], 'ended_at': ended_at, 'state': state,
+            'queued': row['queued'], 'live': row['live']}
+
+
+def stop_campaign(cid):
+    """Stops dialing: every queued call of this campaign goes back to
+    'pending' (so a later launch can pick it up) and the campaign is stamped
+    stopped. Calls already dialed are left to finish. A row the dialer is
+    claiming at this very moment is locked; this UPDATE waits for it, sees it
+    is no longer 'queued' and skips it, so nothing is dialed twice or lost.
+    Returns (calls un-queued, calls still on the line)."""
+    with connect() as conn, conn.cursor() as cur:
+        cur.execute("""UPDATE campaign_calls SET status='pending', queued_at=NULL, updated_at=now()
+                       WHERE campaign_id=%s AND status='queued'""", (cid,))
+        unqueued = cur.rowcount
+        cur.execute("UPDATE campaigns SET stopped_at=now() WHERE id=%s", (cid,))
+        cur.execute("""SELECT COUNT(*) AS n FROM campaign_calls
+                       WHERE campaign_id=%s AND status IN ('dialing','ringing','in_progress')""", (cid,))
+        return unqueued, cur.fetchone()['n']
+
+
 def delete_campaign(cid):
     _q("DELETE FROM campaigns WHERE id=%s", (cid,))
 
@@ -287,6 +347,8 @@ def queue_calls(cid, language_key=None, call_ids=None, is_test=False):
                         FROM languages l
                         WHERE l.key=c.language_key AND {' AND '.join(where)}""", [is_test] + params)
         n = cur.rowcount
+        if n:
+            cur.execute("UPDATE campaigns SET stopped_at=NULL WHERE id=%s", (cid,))
         if n and not is_test:
             cur.execute("UPDATE campaigns SET first_launched_at=COALESCE(first_launched_at, now()) WHERE id=%s", (cid,))
     return n
@@ -336,7 +398,7 @@ def fail_stuck_active(seconds=None):
             seconds = int(os.environ.get('MAX_CALL_SECONDS', '300'))
         except ValueError:
             seconds = 300
-    return _q("""UPDATE campaign_calls SET status='failed', updated_at=now(),
+    return _q("""UPDATE campaign_calls SET status='failed', updated_at=now(), ended_at=now(),
                  error='No final status from provider within %s s; released so the queue can continue. Check Plivo logs for the real outcome.'
                  WHERE status IN ('ringing','in_progress') AND updated_at < now() - make_interval(secs => %s)
                  RETURNING id""" % (int(seconds), '%s'), (seconds,))
@@ -350,16 +412,17 @@ def fail_stale_dialing(minutes=10):
     """A call stuck in 'dialing' with no provider id (process died mid-request)
     may or may not have been placed. We mark it failed rather than retry, so an
     expert is never called twice."""
-    return _q("""UPDATE campaign_calls SET status='failed', updated_at=now(),
+    return _q("""UPDATE campaign_calls SET status='failed', updated_at=now(), ended_at=now(),
                  error='Interrupted while dialing; outcome unknown. Not retried to avoid a duplicate call.'
                  WHERE status='dialing' AND provider_sid IS NULL
                    AND dialed_at < now() - make_interval(mins => %s) RETURNING id""", (minutes,))
 
 
 def mark_dialed(call_id, sid, status, recording, duration=None):
-    _q("""UPDATE campaign_calls SET provider_sid=%s, status=%s, recording_used=%s,
-          duration_seconds=COALESCE(%s, duration_seconds), updated_at=now() WHERE id=%s""",
-       (sid, status, recording, duration, call_id))
+    _q(f"""UPDATE campaign_calls SET provider_sid=%(sid)s, status=%(st)s, recording_used=%(rec)s,
+           duration_seconds=COALESCE(%(dur)s, duration_seconds), updated_at=now(), {STAMP_TIMES}
+           WHERE id=%(id)s""",
+       {'sid': sid, 'st': status, 'rec': recording, 'dur': duration, 'id': call_id})
 
 
 def set_recording_used(call_id, url):
@@ -368,7 +431,7 @@ def set_recording_used(call_id, url):
 
 def mark_failed(call_id, error, recording=None):
     _q("""UPDATE campaign_calls SET status='failed', error=%s, recording_used=COALESCE(%s, recording_used),
-          updated_at=now() WHERE id=%s""", (error[:500], recording, call_id))
+          updated_at=now(), ended_at=COALESCE(ended_at, now()) WHERE id=%s""", (error[:500], recording, call_id))
 
 
 _RANK = {'pending': 0, 'queued': 1, 'dialing': 2, 'ringing': 3, 'in_progress': 4,
@@ -385,8 +448,9 @@ def apply_status_update(call_id, status, duration=None):
             return False
         if row['status'] in TERMINAL or _RANK.get(status, 0) < _RANK.get(row['status'], 0):
             return False
-        cur.execute("""UPDATE campaign_calls SET status=%s, duration_seconds=COALESCE(%s, duration_seconds),
-                       updated_at=now() WHERE id=%s""", (status, duration, call_id))
+        cur.execute(f"""UPDATE campaign_calls SET status=%(st)s, duration_seconds=COALESCE(%(dur)s, duration_seconds),
+                        updated_at=now(), {STAMP_TIMES} WHERE id=%(id)s""",
+                    {'st': status, 'dur': duration, 'id': call_id})
         return True
 
 

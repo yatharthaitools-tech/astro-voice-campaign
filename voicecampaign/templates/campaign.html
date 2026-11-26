@@ -2,7 +2,12 @@
 {% block head %}{% if active_refresh %}<meta http-equiv="refresh" content="8">{% endif %}{% endblock %}
 {% block content %}
 {% macro csrf() %}<input type="hidden" name="_csrf" value="{{ csrf_token() }}">{% endmacro %}
-<div class="row" style="justify-content:space-between"><div><h1>{{ c.name }}</h1><p class="sub">{{ c.source_filename }} · created {{ c.created_at|ist }}</p></div>
+<div class="row" style="justify-content:space-between"><div><h1>{{ c.name }}</h1><p class="sub">{{ c.source_filename }} · created {{ c.created_at|ist }}</p>
+{% set st = timing.state %}<p class="sub" style="margin-top:2px">
+<span class="pill {{ {'running':'good','stopping':'warn','stopped':'bad','finished':'mute','draft':'mute'}[st] }}">{{ {'running':'Running','stopping':'Stopping','stopped':'Stopped','finished':'Finished','draft':'Not launched'}[st] }}</span>
+· Started {{ timing.started_at|ist('%d %b %Y, %H:%M:%S') if timing.started_at else '—' }}
+· Ended {% if timing.ended_at %}{{ timing.ended_at|ist('%d %b %Y, %H:%M:%S') }}{% elif st == 'stopping' %}— finishing {{ timing.live }} call(s) on the line{% elif st == 'running' %}— still calling{% else %}—{% endif %}
+</p></div>
 <a class="btn" href="{{ url_for('report_csv', cid=c.id) }}">Download report (CSV)</a></div>
 {% if not_ready %}<div class="flash warn">{{ not_ready }}</div>{% endif %}
 
@@ -21,6 +26,7 @@
 {% for s in summary if s.key and s.has_audio and s.ready %}<option value="{{ s.key }}">{{ s.name }} only ({{ s.ready }})</option>{% endfor %}</select>
 <button>Launch campaign</button></form>
 <form method="post" action="{{ url_for('resume', cid=c.id) }}">{{ csrf() }}<button class="ghost" title="Restart the dialer if the server was restarted while calls were queued">Resume dialing</button></form>
+{% if timing.queued %}<form method="post" action="{{ url_for('stop', cid=c.id) }}" onsubmit="return confirm('Stop this campaign? No new calls will be placed. Calls already on the line will finish. You can launch again later to continue with the experts not yet called.')">{{ csrf() }}<button style="background:var(--bad)">Stop campaign</button></form>{% endif %}
 </div>
 <p class="sub">Calls are placed {{ 'one at a time' if max_concurrent == 1 else max_concurrent ~ ' at a time' }} (Plivo channel limit): the next call starts only after the previous one ends.</p>
 <p class="sub">To test first, tick a few experts in the table below and use “Send test call”. A tested expert counts as called, so the full launch will skip them.</p>
@@ -43,15 +49,16 @@
 <select name="status"><option value="">All call statuses</option>{% for k, v in status_labels.items() %}<option value="{{ k }}" {{ 'selected' if filters.status == k }}>{{ v }}</option>{% endfor %}</select>
 <button class="ghost">Filter</button><span class="sub" style="margin:0">{{ total }} shown</span></div>
 <form method="post" action="{{ url_for('test_calls', cid=c.id) }}">{{ csrf() }}
-<div class="card scroll"><table><thead><tr><th></th><th>Expert</th><th>Phone</th><th>Language</th><th>Recording</th><th>Mapping</th><th>Call</th><th class="n">Secs</th></tr></thead><tbody>
+<div class="card scroll"><table><thead><tr><th></th><th>Expert</th><th>Phone</th><th>Language</th><th>Recording</th><th>Mapping</th><th>Call</th><th style="white-space:nowrap">Answered at</th><th class="n">Secs</th></tr></thead><tbody>
 {% for k in calls %}<tr>
 <td>{% if k.flag == 'ready' and k.status == 'pending' %}<input type="checkbox" name="call_ids" value="{{ k.id }}">{% endif %}</td>
 <td>{{ k.expert_name or '—' }}</td><td class="mono">{{ k.phone_e164 or k.phone_raw or '—' }}</td><td>{{ k.language_name or k.language_raw or '—' }}</td>
 <td class="mono">{{ (k.recording_used or k.recording_label or '—')|truncate(34) }}</td>
 <td><span class="pill {{ 'good' if k.flag=='ready' else 'bad' }}">{{ flag_labels[k.flag] }}</span></td>
 <td>{% if k.eligibility != 'ok' %}<span class="pill mute">Skipped</span>{% else %}<span class="pill {{ 'good' if k.status in ('completed','in_progress') else ('bad' if k.status in ('failed','canceled') else ('warn' if k.status in ('busy','no_answer') else 'mute')) }}" {% if k.error %}title="{{ k.error }}"{% endif %}>{{ status_labels[k.status] }}</span>{% if k.is_test %} <span class="pill mute">test</span>{% endif %}{% endif %}</td>
+<td class="mono" style="white-space:nowrap">{{ k.answered_at|ist('%d %b, %H:%M:%S') if k.answered_at else '' }}</td>
 <td class="n">{{ k.duration_seconds if k.duration_seconds is not none else '' }}</td></tr>
-{% else %}<tr><td colspan="8">No rows match.</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<tr><td colspan="9">No rows match.</td></tr>{% endfor %}</tbody></table></div>
 <div class="row"><button class="ghost">Send test call to ticked experts</button>
 {% if pages > 1 %}<span class="sub" style="margin:0">Page {{ page }} of {{ pages }}</span>
 {% if page > 1 %}<a href="{{ url_for('campaign', cid=c.id, page=page-1, **filters) }}">← Prev</a>{% endif %}{% if page < pages %}<a href="{{ url_for('campaign', cid=c.id, page=page+1, **filters) }}">Next →</a>{% endif %}{% endif %}</div></form>

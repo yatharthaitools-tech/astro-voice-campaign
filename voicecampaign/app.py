@@ -242,6 +242,7 @@ def create_app(init=True):
             total=total, page=page, pages=max(1, -(-total // PAGE_SIZE)), active_refresh=active,
             filters={'language': lang or '', 'flag': flag or '', 'status': status or ''},
             pending_ready=pending_ready, not_ready=voice.check_ready(), nav='campaigns',
+            timing=db.campaign_timing(cid),
             all_flags=['ready', 'no_recording', 'missing_language', 'invalid_phone', 'no_consent', 'duplicate'])
 
     def _launch(cid, language_key, call_ids, is_test):
@@ -290,6 +291,17 @@ def create_app(init=True):
             flash('Dialer is already running.', 'ok')
         return redirect(url_for('campaign', cid=cid))
 
+    @app.route('/campaigns/<int:cid>/stop', methods=['POST'])
+    @login_required
+    def stop(cid):
+        must_campaign(cid)
+        unqueued, live = db.stop_campaign(cid)
+        msg = f'Campaign stopped. {unqueued} queued call(s) were cancelled and are back to “Not started”.'
+        if live:
+            msg += f' {live} call(s) already on the line will finish normally.'
+        flash(msg + ' Launch again to resume with the remaining experts.', 'ok')
+        return redirect(url_for('campaign', cid=cid))
+
     @app.route('/campaigns/<int:cid>/delete', methods=['POST'])
     @login_required
     def delete_campaign(cid):
@@ -311,8 +323,11 @@ def create_app(init=True):
 
         buf = io.StringIO()
         w = csv.writer(buf)
+        def ist(ts):
+            return ts.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if ts else ''
+
         w.writerow(['expert_name', 'phone_number', 'language', 'recording_used', 'call_status',
-                    'duration_seconds', 'test_call', 'note'])
+                    'answered_at_ist', 'duration_seconds', 'test_call', 'note'])
         for r in db.all_calls_for_report(cid):
             if r['eligibility'] != 'ok':
                 status, note = 'Skipped', rules.FLAG_LABELS[r['eligibility']]
@@ -323,7 +338,8 @@ def create_app(init=True):
             w.writerow([safe(r['expert_name']), r['phone_e164'] or safe(r['phone_raw']),
                         safe(r['language_name'] or r['language_raw']),
                         r['recording_used'] or (r['recording_label'] if r['status'] != 'pending' else ''),
-                        status, r['duration_seconds'] if r['duration_seconds'] is not None else '',
+                        status, ist(r['answered_at']),
+                        r['duration_seconds'] if r['duration_seconds'] is not None else '',
                         'yes' if r['is_test'] else '', safe(note)])
         name = re.sub(r'[^A-Za-z0-9_-]+', '_', c['name'])[:40] or 'campaign'
         return Response('﻿' + buf.getvalue(), mimetype='text/csv',
